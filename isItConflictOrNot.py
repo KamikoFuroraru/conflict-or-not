@@ -1,4 +1,5 @@
 from mercurial import registrar, commands, hg
+import traceback
 
 cmdtable = {}
 command = registrar.command(cmdtable)
@@ -11,25 +12,27 @@ def isItConflictOrNot(ui, repo, dest=None):
     localClonePath = path + '-local'
     remoteClonePath = path + '-remote'
 
-    commands.clone(ui, path, localClonePath)
-
     if dest is None:
         dest = ui.config('paths', 'default')
         commands.clone(ui, dest, remoteClonePath)
     else:
-        commands.clone(ui, dest, remoteClonePath)
+        try:
+            commands.clone(ui, dest, remoteClonePath)
+        except Exception as e:
+            traceback.print_exc(e)
+            ui.write('\nNo repository found on this path.\n')
+            return 0
 
+    commands.clone(ui, path, localClonePath)
     repo = hg.repository(ui, remoteClonePath)
     commands.pull(ui, repo, localClonePath)
 
     try:
         commands.update(ui, repo)
-
         ui.setconfig('ui', 'merge', 'internal:fail')
         conflictOrNot = commands.merge(ui, repo, tool='internal:fail')
 
-    except Exception, e:
-        import traceback
+    except Exception as e:
         traceback.print_exc(e)
         conflictOrNot = False
 
@@ -43,3 +46,5 @@ def isItConflictOrNot(ui, repo, dest=None):
     import shutil
     shutil.rmtree(localClonePath)
     shutil.rmtree(remoteClonePath)
+
+    return 0
