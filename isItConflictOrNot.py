@@ -29,8 +29,7 @@ def isItConflictOrNot(ui, repo, dest=None):
 
     try:
         commands.update(ui, repo)
-        ui.setconfig('ui', 'merge', 'internal:fail')
-        conflictOrNot = commands.merge(ui, repo, tool='internal:fail')
+        conflictOrNot = commands.merge(ui, repo)
 
     except Exception as e:
         traceback.print_exc(e)
@@ -48,3 +47,7 @@ def isItConflictOrNot(ui, repo, dest=None):
     shutil.rmtree(remoteClonePath)
 
     return 0
+
+
+def reposetup(ui, repo):
+    ui.setconfig('ui', 'merge', 'internal:fail')
