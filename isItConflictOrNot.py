@@ -31,6 +31,38 @@ def isItConflictOrNot(ui, repo, dest=None):
         commands.update(ui, repo)
         conflictOrNot = commands.merge(ui, repo)
 
+        ui.pushbuffer()
+        commands.resolve(ui, repo, list=True)
+        uFilesStr = ui.popbuffer()
+        import re
+        uFilesStr = re.sub(r'U ', '', uFilesStr)
+        uFilesList = re.split(r'\n', uFilesStr)
+        uFilesList = list(filter(None, uFilesList))
+
+        for uFile in uFilesList:
+            commands.resolve(ui, repo, mark=uFile)
+
+        commands.commit(ui, repo, message='Unresolved files')
+
+        ui.pushbuffer()
+        commands.identify(ui, repo, num=True)
+        revNum = int(ui.popbuffer())
+        ui.pushbuffer()
+        commands.diff(ui, repo, change=revNum, git=True)
+        diffStr = ui.popbuffer()
+
+        for uFile in uFilesList:
+            lastUfileName = diffStr.rfind(uFile)
+            lastDiff = diffStr.rfind('diff')
+            
+            if lastUfileName > lastDiff:
+                conflicts = diffStr[lastUfileName:]
+            else:
+                lastDiff = diffStr[lastUfileName:].find('diff')+lastUfileName
+                conflicts = diffStr[lastUfileName:lastDiff]
+            
+            print('\n' + conflicts)
+
     except Exception as e:
         traceback.print_exc(e)
         conflictOrNot = False
@@ -43,6 +75,7 @@ def isItConflictOrNot(ui, repo, dest=None):
     repo = hg.repository(ui, path)
 
     import shutil
+
     shutil.rmtree(localClonePath)
     shutil.rmtree(remoteClonePath)
 
@@ -50,4 +83,4 @@ def isItConflictOrNot(ui, repo, dest=None):
 
 
 def reposetup(ui, repo):
-    ui.setconfig('ui', 'merge', 'internal:fail')
+    ui.setconfig('ui', 'merge', 'internal:merge3')
