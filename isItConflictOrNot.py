@@ -44,24 +44,10 @@ def isItConflictOrNot(ui, repo, dest=None):
 
         commands.commit(ui, repo, message='Unresolved files')
 
-        ui.pushbuffer()
-        commands.identify(ui, repo, num=True)
-        revNum = int(ui.popbuffer())
-        ui.pushbuffer()
-        commands.diff(ui, repo, change=revNum, git=True)
-        diffStr = ui.popbuffer()
-
+        import os.path
         for uFile in uFilesList:
-            lastUfileName = diffStr.rfind(uFile)
-            lastDiff = diffStr.rfind('diff')
-            
-            if lastUfileName > lastDiff:
-                conflicts = diffStr[lastUfileName:]
-            else:
-                lastDiff = diffStr[lastUfileName:].find('diff')+lastUfileName
-                conflicts = diffStr[lastUfileName:lastDiff]
-            
-            print('\n' + conflicts)
+            ui.write('\n' + uFile + '\n')
+            commands.cat(ui, repo, file1=os.path.join(remoteClonePath, uFile))
 
     except Exception as e:
         traceback.print_exc(e)
