@@ -1,72 +1,88 @@
 from mercurial import registrar, commands, hg
 import traceback
+import os.path
 
 cmdtable = {}
 command = registrar.command(cmdtable)
 
+CACHE = os.path.expanduser('~/.hg.cache')
 
 @command('isItConflictOrNot')
-def isItConflictOrNot(ui, repo, dest=None):
+def isItConflictOrNot(ui, repo, source=None):
     """Print there will be a conflict after merge or not."""
-    path = repo.root
-    localClonePath = path + '-local'
-    remoteClonePath = path + '-remote'
+    curDir = repo.root
+    localCloneDir = curDir + '-local'
+    remoteCloneDir = curDir + '-remote'
 
-    if dest is None:
-        dest = ui.config('paths', 'default')
-        commands.clone(ui, dest, remoteClonePath)
+    defaultSource = repo.ui.config('paths', 'default')
+
+    if source == None:
+        cloneSource = defaultSource
     else:
-        try:
-            commands.clone(ui, dest, remoteClonePath)
-        except Exception as e:
-            traceback.print_exc(e)
-            ui.write('\nNo repository found on this path.\n')
-            return 0
-
-    commands.clone(ui, path, localClonePath)
-    repo = hg.repository(ui, remoteClonePath)
-    commands.pull(ui, repo, localClonePath)
+        cloneSource = source
 
     try:
-        commands.update(ui, repo)
-        conflictOrNot = commands.merge(ui, repo)
+        if hg.islocal(cloneSource) == False:
+            import urllib
+            cacheSource = os.path.join(CACHE, urllib.quote_plus(cloneSource))
+            if os.path.exists(cacheSource):
+                repo = hg.repository(repo.ui, cacheSource)
+                if commands.incoming(repo.ui, repo, bundle=None, force=False) == 0:
+                    commands.pull(repo.ui, repo, cloneSource)
+                    commands.update(repo.ui, repo)
+                repo = hg.repository(repo.ui, curDir)
+            else:
+                commands.clone(repo.ui, cloneSource, cacheSource)
+            commands.clone(repo.ui, cacheSource, remoteCloneDir)
+        else:
+            commands.clone(repo.ui, cloneSource, remoteCloneDir)
+    except Exception as e:
+        traceback.print_exc(e)
+        return 0
 
-        ui.pushbuffer()
-        commands.resolve(ui, repo, list=True)
-        uFilesStr = ui.popbuffer()
+    commands.clone(repo.ui, curDir, localCloneDir)
+    repo = hg.repository(repo.ui, remoteCloneDir)
+    commands.pull(repo.ui, repo, localCloneDir)
+
+    try:
+        commands.update(repo.ui, repo)
+        conflictOrNot = commands.merge(repo.ui, repo)
+
+        repo.ui.pushbuffer()
+        commands.resolve(repo.ui, repo, list=True)
+        uFilesStr = repo.ui.popbuffer()
         import re
         uFilesStr = re.sub(r'U ', '', uFilesStr)
         uFilesList = re.split(r'\n', uFilesStr)
         uFilesList = list(filter(None, uFilesList))
 
         for uFile in uFilesList:
-            commands.resolve(ui, repo, mark=uFile)
+            commands.resolve(repo.ui, repo, mark=uFile)
 
-        commands.commit(ui, repo, message='Unresolved files')
+        commands.commit(repo.ui, repo, message='Unresolved files')
 
-        import os.path
         for uFile in uFilesList:
-            ui.write('\n' + uFile + '\n')
-            commands.cat(ui, repo, file1=os.path.join(remoteClonePath, uFile))
+            repo.ui.write('\n' + uFile + '\n')
+            commands.cat(repo.ui, repo, file1=os.path.join(remoteCloneDir, uFile))
 
     except Exception as e:
         traceback.print_exc(e)
         conflictOrNot = False
 
     if conflictOrNot is True:
-        ui.write('\nYes, here is a conflict\n')
+        repo.ui.write('\nYes, here is a conflict\n')
     else:
-        ui.write('\nNo, everything cool\n')
+        repo.ui.write('\nNo, everything cool\n')
 
-    repo = hg.repository(ui, path)
+    repo = hg.repository(repo.ui, curDir)
 
     import shutil
 
-    shutil.rmtree(localClonePath)
-    shutil.rmtree(remoteClonePath)
+    shutil.rmtree(localCloneDir)
+    shutil.rmtree(remoteCloneDir)
 
     return 0
 
 
 def reposetup(ui, repo):
-    ui.setconfig('ui', 'merge', 'internal:merge3')
+    repo.ui.setconfig('ui', 'merge', 'internal:merge3')
