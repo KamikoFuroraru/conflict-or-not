@@ -33,13 +33,15 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
     else:
         clone_source = source
 
+    # clear the cache list if this option is set, or
     # if the cache list does not exist, create it
-    if not os.path.exists(cache_list):
-        with open(cache_list, 'a') as f: pass
-
-    # clear the cache list if this option is set
-    if opts.get('clear_cache_list'):
-        with open(cache_list, 'w') as f: pass
+    if opts.get('clear_cache_list') or not os.path.exists(cache_list):
+        try:
+            with open(cache_list, 'w') as f:
+                pass
+        except IOError as e:
+            traceback.print_exc(e)
+            return 0
 
     # if the source is local, then just clone
     if hg.islocal(clone_source):
@@ -55,15 +57,18 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
     else:
         cache_source = None
         cache_source_repo = None
-        with open(cache_list, 'r') as f:
-            lines = f.readlines()
-            f.seek(0)
-            for line in lines:
-                # if there is such info, we say that this is the way to our cash repo
-                if line.startswith(cur_dir + clone_source):
-                    cache_source = line[:-1].replace(cur_dir + clone_source, '')
-                    cache_source_repo = os.path.join(cache_source,
-                                                     '.hg')
+        try:
+            with open(cache_list, 'r') as f:
+                lines = f.readlines()
+                f.seek(0)
+                for line in lines:
+                    # if there is such info, we say that this is the way to our cash repo
+                    if line.startswith(cur_dir + clone_source):
+                        cache_source = line[:-1].replace(cur_dir + clone_source, '')
+                        cache_source_repo = os.path.join(cache_source, '.hg')
+        except IOError as e:
+            traceback.print_exc(e)
+            return 0
 
         # if the cache resource is found but this path does not exist or the path exists,
         # but it is not a repo, or set_cache_repo option,
@@ -71,13 +76,17 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
         was_cached = cache_source is not None
         set_cache = opts.get('set_cache_repo')
         if (was_cached and (not os.path.exists(cache_source) or not os.path.exists(cache_source_repo))) or set_cache:
-            with open(cache_list, 'r+') as f:
-                lines = f.readlines()
-                f.seek(0)
-                for line in lines:
-                    if line != (str(cur_dir + clone_source + cache_source) + '\n'):
-                        f.write(line)
-                f.truncate()
+            try:
+                with open(cache_list, 'r+') as f:
+                    lines = f.readlines()
+                    f.seek(0)
+                    for line in lines:
+                        if line != (str(cur_dir + clone_source + cache_source) + '\n'):
+                            f.write(line)
+                    f.truncate()
+            except IOError as e:
+                traceback.print_exc(e)
+                return 0
             repo.ui.write('\nThe last path to the cache repository is broken.\n')
             cache_source = None
 
@@ -90,17 +99,33 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
             cache_source = str(raw_input('Specify the path for the cache-repository.\n')).replace('\r', '')
             if os.path.exists(cache_source):
                 if not os.listdir(cache_source):
-                    commands.clone(repo.ui, clone_source, cache_source)  # clone from the resource to the cache
+                    try:
+                        commands.clone(repo.ui, clone_source, cache_source)  # clone from the resource to the cache
+                    except RepoError as e:
+                        traceback.print_exc(e)
+                        return 0
                 elif os.path.exists(os.path.join(cache_source, '.hg')):
                     checkupdate(repo, cache_source, clone_source, cur_dir)
                 else:
                     repo.ui.write('\nYou must select an empty folder.\n')
                     return 0
             else:
-                os.makedirs(cache_source)
-                commands.clone(repo.ui, clone_source, cache_source)
-            with open(cache_list, 'a') as f:  # enter information about the new cache
-                f.write(cur_dir + clone_source + cache_source + '\n')
+                try:
+                    os.makedirs(cache_source)
+                except OSError as e:
+                    traceback.print_exc(e)
+                    return 0
+                try:
+                    commands.clone(repo.ui, clone_source, cache_source)
+                except RepoError as e:
+                    traceback.print_exc(e)
+                    return 0
+            try:
+                with open(cache_list, 'a') as f:  # enter information about the new cache
+                    f.write(cur_dir + clone_source + cache_source + '\n')
+            except IOError as e:
+                traceback.print_exc(e)
+                return 0
 
         # if the cache resource is found,
         # check if new changes can be pulled.
@@ -109,10 +134,18 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
             checkupdate(repo, cache_source, clone_source, cur_dir)
 
         # finally create a cache clone as a remote repo clone
-        commands.clone(repo.ui, cache_source, remote_clone_dir)
+        try:
+            commands.clone(repo.ui, cache_source, remote_clone_dir)
+        except RepoError as e:
+            traceback.print_exc(e)
+            return 0
 
     # create a local repo clone
-    commands.clone(repo.ui, cur_dir, local_clone_dir)
+    try:
+        commands.clone(repo.ui, cur_dir, local_clone_dir)
+    except RepoError as e:
+        traceback.print_exc(e)
+        return 0
 
     repo = hg.repository(repo.ui, remote_clone_dir)  # go to remote repo clone
     commands.pull(repo.ui, repo, local_clone_dir)  # pull changes from a local repo clone to it
@@ -136,8 +169,12 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
 
         for uFile in u_files_list:
             repo.ui.write('\n' + uFile + '\n')
-            with open(os.path.join(remote_clone_dir, uFile), 'r') as f:
-                repo.ui.write(f.read())
+            try:
+                with open(os.path.join(remote_clone_dir, uFile), 'r') as f:
+                    repo.ui.write(f.read())
+            except IOError as e:
+                traceback.print_exc(e)
+                return 0
 
         repo.ui.write('\n\nYes, here is a conflict\n')
 
