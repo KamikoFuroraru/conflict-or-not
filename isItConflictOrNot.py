@@ -9,9 +9,6 @@ from mercurial.i18n import _
 cmdtable = {}
 command = registrar.command(cmdtable)
 
-# path to the cache list
-cache_list = os.path.join(os.path.expanduser('~/.hg.cache'), 'cache_list')
-
 
 @command('isItConflictOrNot',
          [('', 'clear_cache_list', None, _('clear all cache-list')),
@@ -33,9 +30,19 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
     else:
         clone_source = source
 
+    # path to the cache list
+    cache_list_source = os.path.expanduser('~/.hg.cache')
+    cache_list = os.path.join(cache_list_source, 'cache_list')
+
     # clear the cache list if this option is set, or
     # if the cache list does not exist, create it
-    if opts.get('clear_cache_list') or not os.path.exists(cache_list):
+    if not os.path.exists(cache_list) or opts.get('clear_cache_list'):
+        if not os.path.exists(cache_list_source):
+            try:
+                os.makedirs(cache_list_source)
+            except OSError as e:
+                traceback.print_exc(e)
+                return 0
         try:
             with open(cache_list, 'w') as f:
                 pass
@@ -93,7 +100,7 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
         # if the cache resource is not found
         # suggest to choose the path to the cash repo
         # if the paths exists and empty -> clone,
-        # if the path eists and repo -> checkupdate
+        # if the path exists and repo -> checkupdate
         # else: select empty folder
         if cache_source is None:
             cache_source = str(raw_input('Specify the path for the cache-repository.\n')).replace('\r', '')
@@ -151,7 +158,11 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
     commands.pull(repo.ui, repo, local_clone_dir)  # pull changes from a local repo clone to it
     commands.update(repo.ui, repo)  # update
     try:
+        repo.ui.pushbuffer()
         conflict_or_not = commands.merge(repo.ui, repo)  # do merge3
+        deleted_str = repo.ui.popbuffer()
+        deleted_list = re.split(r'\n', deleted_str)
+        deleted_list = list(filter(lambda x: x.startswith('file') is True, deleted_list))
     except NoMergeDestAbort as e:
         traceback.print_exc(e)
         conflict_or_not = False
@@ -167,11 +178,15 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
         u_files_list = re.split(r'\n', u_files_str)
         u_files_list = list(filter(None, u_files_list))
 
+        if deleted_list:
+            for dFile in deleted_list:
+                repo.ui.write('\n' + dFile + '\n')
+
         for uFile in u_files_list:
             repo.ui.write('\n' + uFile + '\n')
             try:
                 with open(os.path.join(remote_clone_dir, uFile), 'r') as f:
-                    repo.ui.write(f.read())
+                    repo.ui.write(f.read() + '\n')
             except IOError as e:
                 traceback.print_exc(e)
                 return 0
@@ -195,6 +210,7 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
 
 def reposetup(ui, repo):
     repo.ui.setconfig('ui', 'merge', 'internal:merge3')
+    repo.ui.setconfig('ui', 'interactive', 'no')
 
 
 def checkupdate(repo, cache_source, clone_source, cur_dir):
