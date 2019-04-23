@@ -187,16 +187,16 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
     for mFile in file_state_list:
         cur_dir_mFile = os.path.join(cur_dir, mFile)
         local_clone_dir_mFile = os.path.join(local_clone_dir, mFile)
-        try:
-            if mFile in removed_list:
-                commands.remove(repo.ui, repo, local_clone_dir_mFile)
-            elif mFile in add_list:
-                commands.add(repo.ui, repo, local_clone_dir_mFile)
-            else:
+        if mFile in removed_list:
+            commands.remove(repo.ui, repo, local_clone_dir_mFile)
+        elif mFile in add_list:
+            commands.add(repo.ui, repo, local_clone_dir_mFile)
+        else:
+            try:
                 shutil.copy2(cur_dir_mFile, local_clone_dir_mFile)
-        except IOError as e:
-            traceback.print_exc(e)
-            return 0
+            except IOError as e:
+                traceback.print_exc(e)
+                return 0
 
     # do commit inside local-clone
     commands.commit(repo.ui, repo, message='Modified files')
@@ -204,14 +204,15 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
     repo = hg.repository(repo.ui, remote_clone_dir)  # go to remote repo clone
     commands.pull(repo.ui, repo, local_clone_dir)  # pull changes from a local repo clone to it
     commands.update(repo.ui, repo)  # update
+    
+    repo.ui.pushbuffer()
     try:
-        repo.ui.pushbuffer()
         conflict_or_not = commands.merge(repo.ui, repo)  # do merge3
-        deleted_str = repo.ui.popbuffer()
-        deleted_list = re.findall('\'(.*)\'', deleted_str)
     except NoMergeDestAbort as e:
         traceback.print_exc(e)
         conflict_or_not = False
+    deleted_str = repo.ui.popbuffer()
+    deleted_list = re.findall('\'(.*)\'', deleted_str)
 
     # if there is a conflict,
     # we look at the list of files with conflicts
@@ -224,17 +225,17 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
 
         for uFile in u_files_list:
             repo.ui.write('\n' + uFile + '\n')
-            try:
-                if uFile in deleted_list:
-                    repo.ui.write(
-                        'file ' + uFile + 'was deleted in other [merge rev] but was modified in local [working '
+            if uFile in deleted_list:
+                repo.ui.write(
+                    'file ' + uFile + 'was deleted in other [merge rev] but was modified in local [working '
                                           'copy].\n')
-                else:
+            else:
+                try:
                     with open(os.path.join(remote_clone_dir, uFile), 'r') as f:
                         repo.ui.write(f.read() + '\n')
-            except IOError as e:
-                traceback.print_exc(e)
-                return 0
+                except IOError as e:
+                    traceback.print_exc(e)
+                    return 0
 
         repo.ui.write('\nYes, here is a conflict\n')
 
