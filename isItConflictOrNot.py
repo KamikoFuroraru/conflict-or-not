@@ -114,9 +114,16 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
                         traceback.print_exc(e)
                         return 0
                 elif os.path.exists(os.path.join(cache_source, '.hg')):
-                    checkupdate(repo, cache_source, clone_source, cur_dir)
+                    repo = hg.repository(repo.ui, cache_source)
+                    if clone_source == repo.ui.config('paths', 'default'):
+                        checkupdate(repo, clone_source)
+                        repo = hg.repository(repo.ui, cur_dir)
+                    else:
+                        repo = hg.repository(repo.ui, cur_dir)
+                        repo.ui.write('\nСache-repo and remote-repo do not match.\n')
+                        return 0
                 else:
-                    repo.ui.write('\nYou must select an empty folder.\n')
+                    repo.ui.write('\nYou must select an empty folder or an existing repo folder.\n')
                     return 0
             else:
                 try:
@@ -140,7 +147,9 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
         # check if new changes can be pulled.
         # if yes, pull and update
         else:
-            checkupdate(repo, cache_source, clone_source, cur_dir)
+            repo = hg.repository(repo.ui, cache_source)
+            checkupdate(repo, clone_source)
+            repo = hg.repository(repo.ui, cur_dir)
 
         # finally create a cache clone as a remote repo clone
         try:
@@ -165,8 +174,6 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
     # I = игнорируется (ignored)
     #   = источник предыдущего файла показанного как A (добавлен)
 
-    # ?????
-    
     repo.ui.pushbuffer()
     commands.status(repo.ui, repo)  # check status
     file_state_str = repo.ui.popbuffer()
@@ -250,9 +257,7 @@ def reposetup(ui, repo):
     repo.ui.setconfig('ui', 'interactive', 'no')
 
 
-def checkupdate(repo, cache_source, clone_source, cur_dir):
-    repo = hg.repository(repo.ui, cache_source)
+def checkupdate(repo, clone_source):
     if commands.incoming(repo.ui, repo, bundle=None, force=False) == 0:
         commands.pull(repo.ui, repo, clone_source)
         commands.update(repo.ui, repo)
-    repo = hg.repository(repo.ui, cur_dir)
