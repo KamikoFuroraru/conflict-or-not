@@ -1,6 +1,8 @@
+# coding=utf-8
 import os.path
 import re
 import traceback
+import shutil
 
 from mercurial import commands, hg, registrar
 from mercurial.error import NoMergeDestAbort, RepoError
@@ -154,6 +156,44 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
         traceback.print_exc(e)
         return 0
 
+    # M = изменен (modified)
+    # A = добавлен (added)
+    # R = удален (removed)
+    # C = без изменений (clean)
+    # ! = отсутствует (missing) (удален внешней командой, отслеживается)
+    # ? = не отслеживается
+    # I = игнорируется (ignored)
+    #   = источник предыдущего файла показанного как A (добавлен)
+
+    # ?????
+    
+    repo.ui.pushbuffer()
+    commands.status(repo.ui, repo)  # check status
+    file_state_str = repo.ui.popbuffer()
+    file_state_list = re.findall(' (.*)\n', file_state_str)
+    removed_list = re.findall('R (.*)\n', file_state_str)
+    add_list = re.findall('A (.*)\n', file_state_str)
+
+    repo = hg.repository(repo.ui, local_clone_dir)
+
+    # copying from working dir to local clone
+    for mFile in file_state_list:
+        cur_dir_mFile = os.path.join(cur_dir, mFile)
+        local_clone_dir_mFile = os.path.join(local_clone_dir, mFile)
+        try:
+            if mFile in removed_list:
+                commands.remove(repo.ui, repo, local_clone_dir_mFile)
+            elif mFile in add_list:
+                commands.add(repo.ui, repo, local_clone_dir_mFile)
+            else:
+                shutil.copy2(cur_dir_mFile, local_clone_dir_mFile)
+        except IOError as e:
+            traceback.print_exc(e)
+            return 0
+
+    # do commit inside local-clone
+    commands.commit(repo.ui, repo, message='Modified files')
+
     repo = hg.repository(repo.ui, remote_clone_dir)  # go to remote repo clone
     commands.pull(repo.ui, repo, local_clone_dir)  # pull changes from a local repo clone to it
     commands.update(repo.ui, repo)  # update
@@ -161,8 +201,7 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
         repo.ui.pushbuffer()
         conflict_or_not = commands.merge(repo.ui, repo)  # do merge3
         deleted_str = repo.ui.popbuffer()
-        deleted_list = re.split(r'\n', deleted_str)
-        deleted_list = list(filter(lambda x: x.startswith('file') is True, deleted_list))
+        deleted_list = re.findall('\'(.*)\'', deleted_str)
     except NoMergeDestAbort as e:
         traceback.print_exc(e)
         conflict_or_not = False
@@ -174,24 +213,23 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
         repo.ui.pushbuffer()
         commands.resolve(repo.ui, repo, list=True)
         u_files_str = repo.ui.popbuffer()
-        u_files_str = u_files_str.replace('U ', '')
-        u_files_list = re.split(r'\n', u_files_str)
-        u_files_list = list(filter(None, u_files_list))
-
-        if deleted_list:
-            for dFile in deleted_list:
-                repo.ui.write('\n' + dFile + '\n')
+        u_files_list = re.findall('U (.*)\n', u_files_str)
 
         for uFile in u_files_list:
             repo.ui.write('\n' + uFile + '\n')
             try:
-                with open(os.path.join(remote_clone_dir, uFile), 'r') as f:
-                    repo.ui.write(f.read() + '\n')
+                if uFile in deleted_list:
+                    repo.ui.write(
+                        'file ' + uFile + 'was deleted in other [merge rev] but was modified in local [working '
+                                          'copy].\n')
+                else:
+                    with open(os.path.join(remote_clone_dir, uFile), 'r') as f:
+                        repo.ui.write(f.read() + '\n')
             except IOError as e:
                 traceback.print_exc(e)
                 return 0
 
-        repo.ui.write('\n\nYes, here is a conflict\n')
+        repo.ui.write('\nYes, here is a conflict\n')
 
     # if there is no conflict, say it
     else:
@@ -201,7 +239,6 @@ def isItConflictOrNot(ui, repo, source=None, **opts):
     repo = hg.repository(repo.ui, cur_dir)
 
     # delete clones
-    import shutil
     shutil.rmtree(local_clone_dir)
     shutil.rmtree(remote_clone_dir)
 
