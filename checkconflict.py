@@ -1,8 +1,11 @@
+import io
 import os.path
+import urlparse
 import re
 import traceback
 import shutil
 import json
+import sys
 
 from mercurial import commands, hg, registrar
 from mercurial.error import NoMergeDestAbort, RepoError
@@ -26,16 +29,18 @@ def checkconflict(ui, repo, source=None, **opts):
     local_clone_dir = cur_dir + '-local'
     remote_clone_dir = cur_dir + '-remote'
 
-    default_source = repo.ui.config('paths', 'default')
-
     # if the source is not specified,
     # we take the default one from the repo configuration.
     # otherwise we take source
 
     if source is None:
-        clone_source = default_source
+        clone_source = check_config(repo, 'default')
     else:
-        clone_source = source
+        is_URL = bool(urlparse.urlparse(source).netloc)
+        if os.path.isdir(source) or is_URL:
+            clone_source = source
+        else:
+            clone_source = check_config(repo, str(source))
 
     # path to the cache list
     cache_dir = os.path.expanduser('~\\.hg.cache')
@@ -62,21 +67,22 @@ def checkconflict(ui, repo, source=None, **opts):
             create_cache_list(cache_list)
         else:
             data = read_cache_list(cache_list)
-            cache_source = find_cache_src(data, cur_dir, clone_source, for_remove=False)
+            cache_source = find_cache_src(data, cur_dir, clone_source)
 
         # if the cache resource is found but this path does not exist or the path exists,
         # but it is not a repo, or set_cache_repo option,
         # we delete information about this cache repo from the cache list
-
         was_cached = cache_source is not None
-        if was_cached and not is_repo(repo, str(cache_source)) or opts.get('set_cache_repo'):
-            cache_list_data = read_cache_list(cache_list)
-            cache_list_data = find_cache_src(cache_list_data, cur_dir, clone_source, for_remove=True)
+        if was_cached:
+            cache_source = cache_source.encode('cp1251')
+            if not is_repo(repo, cache_source) or opts.get('set_cache_repo'):
+                cache_data = read_cache_list(cache_list)
+                new_cache_data = find_cache_src(cache_data, cur_dir, clone_source, for_remove=True)
 
-            write_cache_list(cache_list, cache_list_data, add=False)
+                write_cache_list(cache_list, new_cache_data)
 
-            repo.ui.write('\nThe last path to the cache repository is broken.\n')
-            cache_source = None
+                repo.ui.write('\nThe last path to the cache repository is broken.\n')
+                cache_source = None
 
         # if the cache resource is not found
         # suggest to choose the path to the cash repo
@@ -92,18 +98,20 @@ def checkconflict(ui, repo, source=None, **opts):
             if os.path.exists(cache_source):
                 if not os.listdir(cache_source):
                     clone(repo, clone_source, cache_source)  # clone from the resource to the cache
-                elif is_repo(repo, str(cache_source)):
+                elif is_repo(repo, cache_source):
+                    clone_root = commands.identify(repo.ui, repo, rev=0)
                     repo = hg.repository(repo.ui, cache_source)
-                    if clone_source == repo.ui.config('paths', 'default'):
+                    cache_root = commands.identify(repo.ui, repo, rev=0)
+                    if clone_root == cache_root:
                         check_update(repo, clone_source)
                         repo = hg.repository(repo.ui, cur_dir)
                     else:
                         repo = hg.repository(repo.ui, cur_dir)
                         repo.ui.write('\nCache-repo and remote-repo do not match.\n')
-                        return 0
+                        sys.exit()
                 else:
                     repo.ui.write('\nYou must select an empty folder or an existing repo folder.\n')
-                    return 0
+                    sys.exit()
             else:
                 make_dir(cache_source)
                 clone(repo, clone_source, cache_source)
@@ -116,12 +124,12 @@ def checkconflict(ui, repo, source=None, **opts):
         # if yes, pull and update
 
         else:
-            repo = hg.repository(repo.ui, str(cache_source))
+            repo = hg.repository(repo.ui, cache_source)
             check_update(repo, clone_source)
             repo = hg.repository(repo.ui, cur_dir)
 
         # finally clone from cache to remote
-        clone(repo, str(cache_source), remote_clone_dir)
+        clone(repo, cache_source, remote_clone_dir)
 
     # create a local repo clone
     clone(repo, cur_dir, local_clone_dir)
@@ -173,12 +181,22 @@ def checkconflict(ui, repo, source=None, **opts):
     # delete clones
     remove_clones(local_clone_dir, remote_clone_dir)
 
-    return 0
+    sys.exit()
 
 
 def reposetup(ui, repo):
     repo.ui.setconfig('ui', 'merge', 'internal:merge3')
     repo.ui.setconfig('ui', 'interactive', 'no')
+
+
+def check_config(repo, source):
+    config_source = repo.ui.config('paths', str(source))
+    if config_source is None:
+        repo.ui.write('\nDefault path is not specified.\nYou must specify the path explicitly or specify one of the '
+                      'paths of your config.\n')
+        sys.exit()
+    else:
+        return config_source
 
 
 def check_uncommited_changes(repo):
@@ -193,7 +211,7 @@ def check_uncommited_changes(repo):
                                  'commit the latest changes and restart the command (press n to abort) ')).replace('\r',
                                                                                                                    '')
         if do_check == 'n':
-            return 0
+            sys.exit()
 
 
 def clone(repo, from_source, to_source):
@@ -201,7 +219,7 @@ def clone(repo, from_source, to_source):
         commands.clone(repo.ui, from_source, to_source)
     except RepoError as e:
         traceback.print_exc(e)
-        return 0
+        sys.exit()
 
 
 def remove_clones(local_clone_dir, remote_clone_dir):
@@ -230,19 +248,19 @@ def make_dir(dir):
         os.makedirs(dir)
     except OSError as e:
         traceback.print_exc(e)
-        return 0
+        sys.exit()
 
 
 def create_cache_list(cache_list):
-    write_cache_list(cache_list, [], add=False)
+    write_cache_list(cache_list, [])
 
 
 def read_cache_list(cache_list):
-    with open(cache_list) as f:
+    with io.open(cache_list, encoding='cp1251') as f:
         return json.load(f)
 
 
-def write_cache_list(cache_list, cache_note, add):
+def write_cache_list(cache_list, cache_note, add=False):
     if add:
         data = read_cache_list(cache_list)
         data.append(cache_note)
@@ -250,13 +268,13 @@ def write_cache_list(cache_list, cache_note, add):
         data = cache_note
     try:
         with open(cache_list, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, ensure_ascii=False)
     except IOError as e:
         traceback.print_exc(e)
-        return 0
+        sys.exit()
 
 
-def find_cache_src(data, cur_dir, clone_source, for_remove):
+def find_cache_src(data, cur_dir, clone_source, for_remove=False):
     for note in data:
         work_dir = note['work_dir'] == cur_dir
         source_dir = note['source_dir'] == clone_source
@@ -313,4 +331,4 @@ def show_file_merge(repo, remote_clone_dir, file):
             repo.ui.write('\n' + f.read() + '\n')
     except IOError as e:
         traceback.print_exc(e)
-        return 0
+        sys.exit()
